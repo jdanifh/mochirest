@@ -7,7 +7,7 @@
 %%% %%% @end
 %%% %%% -------------------------------------------------------------------
 -module(mochirest).
--export([router/2, respond/2, respond/3]).
+-export([router/2, controllers/0, controllers/1, respond/2, respond/3]).
 
 %% External API
 
@@ -18,9 +18,9 @@
 router(Req, Options) ->
 	"/" ++ Path = Req:get(path),
     Method = erlang:list_to_atom(string:to_lower(erlang:atom_to_list(Req:get(method)))),
-    BaseDir = proplists:get_value(basedir, Options, "**"),
+    Controllers = proplists:get_value(controllers, Options, controllers()),
 	try
-		case dispatch(Req, controllers(Method, BaseDir), Options) of
+		case dispatch(Req, Method, Controllers, Options) of
 			none -> 
 				% No request handler found
                 DocRoot = proplists:get_value(docroot, Options),
@@ -36,7 +36,7 @@ router(Req, Options) ->
                         end
 				end;
 			Response -> 
-				Response
+                respond(Req, Response)
 		end
 	catch
 		Type:What ->
@@ -53,28 +53,32 @@ router(Req, Options) ->
 %% @private
 %% @doc Gets all the controller modules
 %% @end
--spec controllers(atom(), list()) -> term().
-controllers(Method, BaseDir) ->
+-spec controllers() -> [tuple()].
+controllers() ->
+    controllers("**").
+
+controllers(BaseDir) ->
     lists:foldl( fun(Elem, Acc) ->
         {module, Module} = code:ensure_loaded(list_to_atom(filename:rootname(filename:basename(Elem)))),
         Attr = Module:module_info(attributes),
-        List = proplists:get_all_values(Method, Attr),
-        Acc ++ lists:map( fun(E) ->
-            case E of
-                [{Url, {Fun, _}}] ->
-                    {Url, Module, Fun, undefined};
-                [{Url, {Fun, _}, Roles}] ->
-                    {Url, Module, Fun, Roles};
-                [{Url, Mod, {Fun, _}}] ->
-                    {Url, Mod, Fun, undefined};
-                [{Url, Mod, Fun}] ->
-                    {Url, Mod, Fun, undefined};
-                [{Url, Mod, {Fun, _}, Roles}] ->
-                    {Url, Mod, Fun, Roles};
-                [{Url, Mod, Fun, Roles}] ->
-                    {Url, Mod, Fun, Roles}
+        lists:foldl(fun(Elem2, Acc2) ->
+            case Elem2 of
+                {Method, [{Url, {Fun, _}}]} ->
+                    [{Method, Url, Module, Fun, undefined} | Acc2];
+                {Method, [{Url, {Fun, _}, Roles}]} ->
+                    [{Method, Url, Module, Fun, Roles} | Acc2];
+                {Method, [{Url, Mod, {Fun, _}}]} ->
+                    [{Method, Url, Mod, Fun, undefined} | Acc2];
+                {Method, [{Url, Mod, Fun}]} ->
+                    [{Method, Url, Mod, Fun, undefined} | Acc2];
+                {Method, [{Url, Mod, {Fun, _}, Roles}]} ->
+                    [{Method, Url, Mod, Fun, Roles} | Acc2];
+                {Method, [{Url, Mod, Fun, Roles}]} ->
+                    [{Method, Url, Mod, Fun, Roles} | Acc2];
+                _ ->
+                    Acc2
             end
-        end, List)
+        end, Acc, Attr)
     end, [], filelib:wildcard(BaseDir ++ "/ebin/*.beam")).
 
 %% @private
@@ -114,29 +118,29 @@ regex(Path, Url) ->
 %% @doc  Iterate recursively on our list of {Module, Url} tuples
 %% to match the URL with de Function it belongs to.
 %% @end
--spec dispatch(Req::term(), [tuple()], list()) -> term().
-dispatch(_, [], _) -> none;
-dispatch(Req, [{Url, Module, Function, Roles} | T], Options) -> 
+-spec dispatch(Req::term(), atom(), [tuple()], list()) -> term().
+dispatch(_, _, [], _) -> none;
+dispatch(Req, Method, [{Method, Url, Module, Function, Roles} | T], Options) -> 
 	Path = Req:get(path),
     AuthFun = proplists:get_value(auth, Options),
 	case regex(Path, Url) of
 		{match, Param} -> 
 			case Roles of
 				undefined ->
-                    Result = Module:Function(Req, Param),
-                    respond(Req, Result);
+                    Module:Function(Req, Param);
 				Roles ->
 					case AuthFun(Req, Roles) of
 						{ok, Session} ->
-							Result = Module:Function(Req, Session, Param),
-                            respond(Req, Result);
+							Module:Function(Req, Session, Param);
 						Error ->
-							respond(Req, Error)
+							Error
 					end
 			end;
 		_ -> 
-			dispatch(Req, T, Options)
-	end.
+			dispatch(Req, Method, T, Options)
+	end;
+dispatch(Req, Method, [_ |T], Options) ->
+    dispatch(Req, Method, T, Options).
 
 
 %% @doc Function to wrap the result of the api.
@@ -174,4 +178,4 @@ respond(Req, Result) ->
 %% @end
 -spec respond(Req::term(), Status::number(), term()) -> term().
 respond(Req, Status, Result) ->
-	Req:respond({Status,[{"Content-Type", "json"}],mochijson2:encode(Result)}).
+	Req:respond({Status,[{"Content-Type", "application/json"}],mochijson2:encode(Result)}).
