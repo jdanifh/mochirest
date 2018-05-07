@@ -7,7 +7,7 @@
 %%% %%% @end
 %%% %%% -------------------------------------------------------------------
 -module(mochirest).
--export([router/2, controllers/0, controllers/1, respond/2, respond/3]).
+-export([router/2, handlers/0, handlers/1, respond/2, respond/3]).
 
 %% External API
 
@@ -18,9 +18,9 @@
 router(Req, Options) ->
 	"/" ++ Path = Req:get(path),
     Method = erlang:list_to_atom(string:to_lower(erlang:atom_to_list(Req:get(method)))),
-    Controllers = proplists:get_value(controllers, Options, controllers()),
+    Handlers = proplists:get_value(handlers, Options, handlers()),
 	try
-		case dispatch(Req, Method, Controllers, Options) of
+		case dispatch(Req, Method, Handlers, Options) of
 			none -> 
 				% No request handler found
                 DocRoot = proplists:get_value(docroot, Options),
@@ -51,13 +51,13 @@ router(Req, Options) ->
 %% Internal API
 
 %% @private
-%% @doc Gets all the controller modules
+%% @doc Gets all the handler modules
 %% @end
--spec controllers() -> [tuple()].
-controllers() ->
-    controllers("**").
+-spec handlers() -> [tuple()].
+handlers() ->
+    handlers("**").
 
-controllers(BaseDir) ->
+handlers(BaseDir) ->
     lists:foldl( fun(Elem, Acc) ->
         {module, Module} = code:ensure_loaded(list_to_atom(filename:rootname(filename:basename(Elem)))),
         Attr = Module:module_info(attributes),
